@@ -83,6 +83,20 @@ namespace S7.Net
         }
 
         /// <summary>
+        /// Read byte array from the PLC, takes in input strings like "DB1.DBB10" (byte array)
+        /// </summary>
+        /// <param name="variable">Input string like "DB1.DBB10"</param>
+        /// <param name="count">Number of bytes to read</param>
+        /// <returns>Returns an object that contains the value. This object must be cast accordingly. If no data has been read, null will be returned</returns>
+        public object? ReadBytes(string variable, int count)
+        {
+            var adr = new PLCAddress(variable);
+            return Read(adr.DataType, adr.DbNumber, adr.StartByte, adr.VarType, count);
+        }
+
+
+
+        /// <summary>
         /// Reads all the bytes needed to fill a struct in C#, starting from a certain address, and return an object that can be casted to the struct.
         /// </summary>
         /// <param name="structType">Type of the struct to be readed (es.: TypeOf(MyStruct)).</param>
