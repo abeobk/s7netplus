@@ -1,6 +1,6 @@
 ﻿namespace S7.Net
 {
-    internal class PLCAddress
+    public class PLCAddress
     {
         private DataType dataType;
         private int dbNumber;
