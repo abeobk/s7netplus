@@ -1,7 +1,6 @@
 ﻿using S7.Net.Helper;
 using S7.Net.Protocol.S7;
 using S7.Net.Types;
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using DateTime = S7.Net.Types.DateTime;
@@ -10,29 +9,104 @@ namespace S7.Net
 {
     public partial class Plc
     {
-        /// <summary>
-        /// Creates the header to read bytes from the PLC
-        /// </summary>
-        /// <param name="amount"></param>
-        /// <returns></returns>
-        private static void BuildHeaderPackage(System.IO.MemoryStream stream, int amount = 1)
+        private static void WriteTpktHeader(System.IO.MemoryStream stream, int length)
         {
-            //header size = 19 bytes
-            stream.WriteByteArray(new byte[] { 0x03, 0x00 });
-            //complete package size
-            stream.WriteByteArray(Types.Int.ToByteArray((short)(19 + (12 * amount))));
-            stream.WriteByteArray(new byte[] { 0x02, 0xf0, 0x80, 0x32, 0x01, 0x00, 0x00, 0x00, 0x00 });
-            //data part size
-            stream.WriteByteArray(Types.Word.ToByteArray((ushort)(2 + (amount * 12))));
-            stream.WriteByteArray(new byte[] { 0x00, 0x00, 0x04 });
+            stream.Write(new byte[] { 0x03, 0x00 });
+            stream.Write(Word.ToByteArray((ushort) length));
+        }
+
+        private static void WriteDataHeader(System.IO.MemoryStream stream)
+        {
+            stream.Write(new byte[] { 0x02, 0xf0, 0x80 });
+        }
+
+        private static void WriteS7Header(System.IO.MemoryStream stream, byte messageType, int parameterLength, int dataLength)
+        {
+            stream.WriteByte(0x32); // S7 protocol ID
+            stream.WriteByte(messageType); // Message type
+            stream.Write(new byte[] { 0x00, 0x00 }); // Reserved
+            stream.Write(new byte[] { 0x00, 0x00 }); // PDU ref
+            stream.Write(Word.ToByteArray((ushort) parameterLength));
+            stream.Write(Word.ToByteArray((ushort) dataLength));
+        }
+
+        /// <summary>
+        /// Creates the header to read bytes from the PLC.
+        /// </summary>
+        /// <param name="stream">The stream to write to.</param>
+        /// <param name="amount">The number of items to read.</param>
+        private static void WriteReadHeader(System.IO.MemoryStream stream, int amount = 1)
+        {
+            // Header size 19, 12 bytes per item
+            WriteTpktHeader(stream, 19 + 12 * amount);
+            WriteDataHeader(stream);
+            WriteS7Header(stream, 0x01, 2 + 12 * amount, 0);
+            // Function code: read request
+            stream.WriteByte(0x04);
             //amount of requests
             stream.WriteByte((byte)amount);
+        }
+
+        private static void WriteUserDataHeader(System.IO.MemoryStream stream, int parameterLength, int dataLength)
+        {
+            const byte s7MessageTypeUserData = 0x07;
+
+            WriteTpktHeader(stream, 17 + parameterLength + dataLength);
+            WriteDataHeader(stream);
+            WriteS7Header(stream, s7MessageTypeUserData, parameterLength, dataLength);
+        }
+
+        private static void WriteUserDataRequest(System.IO.MemoryStream stream, byte functionGroup, byte subFunction, int dataLength)
+        {
+            WriteUserDataHeader(stream, 8, dataLength);
+
+            // Parameter
+            const byte userDataMethodRequest = 0x11;
+            const byte userDataTypeRequest = 0x4;
+
+            // Parameter head
+            stream.Write(new byte[] { 0x00, 0x01, 0x12 });
+            // Parameter length
+            stream.WriteByte(0x04);
+            // Method
+            stream.WriteByte(userDataMethodRequest);
+            // Type / function group
+            stream.WriteByte((byte)(userDataTypeRequest << 4 | (functionGroup & 0x0f)));
+            // Subfunction
+            stream.WriteByte(subFunction);
+            // Sequence number
+            stream.WriteByte(0);
+        }
+
+        private static void WriteSzlReadRequest(System.IO.MemoryStream stream, ushort szlId, ushort szlIndex)
+        {
+            // Parameter
+            const byte szlFunctionGroupCpuFunctions = 0b100;
+            const byte subFunctionReadSzl = 0x01;
+
+            WriteUserDataRequest(stream, szlFunctionGroupCpuFunctions, subFunctionReadSzl, 8);
+
+            // Data
+            const byte success = 0xff;
+            const byte transportSizeOctetString = 0x09;
+
+            // Return code
+            stream.WriteByte(success);
+            // Transport size
+            stream.WriteByte(transportSizeOctetString);
+            // Length
+            stream.Write(Word.ToByteArray(4));
+            // SZL-ID
+            stream.Write(Word.ToByteArray(szlId));
+            // SZL-Index
+            stream.Write(Word.ToByteArray(szlIndex));
         }
 
         /// <summary>
         /// Create the bytes-package to request data from the PLC. You have to specify the memory type (dataType),
         /// the address of the memory, the address of the byte and the bytes count.
         /// </summary>
+        /// <param name="stream">The stream to write the read data request to.</param>
         /// <param name="dataType">MemoryType (DB, Timer, Counter, etc.)</param>
         /// <param name="db">Address of the memory to be read</param>
         /// <param name="startByteAdr">Start address of the byte</param>
@@ -41,7 +115,7 @@ namespace S7.Net
         private static void BuildReadDataRequestPackage(System.IO.MemoryStream stream, DataType dataType, int db, int startByteAdr, int count = 1)
         {
             //single data req = 12
-            stream.WriteByteArray(new byte[] { 0x12, 0x0a, 0x10 });
+            stream.Write(new byte[] { 0x12, 0x0a, 0x10 });
             switch (dataType)
             {
                 case DataType.Timer:
@@ -53,8 +127,8 @@ namespace S7.Net
                     break;
             }
 
-            stream.WriteByteArray(Word.ToByteArray((ushort)(count)));
-            stream.WriteByteArray(Word.ToByteArray((ushort)(db)));
+            stream.Write(Word.ToByteArray((ushort)(count)));
+            stream.Write(Word.ToByteArray((ushort)(db)));
             stream.WriteByte((byte)dataType);
             var overflow = (int)(startByteAdr * 8 / 0xffffU); // handles words with address bigger than 8191
             stream.WriteByte((byte)overflow);
@@ -62,10 +136,10 @@ namespace S7.Net
             {
                 case DataType.Timer:
                 case DataType.Counter:
-                    stream.WriteByteArray(Types.Word.ToByteArray((ushort)(startByteAdr)));
+                    stream.Write(Word.ToByteArray((ushort)(startByteAdr)));
                     break;
                 default:
-                    stream.WriteByteArray(Types.Word.ToByteArray((ushort)((startByteAdr) * 8)));
+                    stream.Write(Word.ToByteArray((ushort)((startByteAdr) * 8)));
                     break;
             }
         }
@@ -168,6 +242,24 @@ namespace S7.Net
                     {
                         return DateTimeLong.ToArray(bytes);
                     }
+                case VarType.Time:
+                    if (varCount == 1)
+                    {
+                        return TimeSpan.FromByteArray(bytes);
+                    }
+                    else
+                    {
+                        return TimeSpan.ToArray(bytes);
+                    }
+                case VarType.Date:
+                    if (varCount == 1)
+                    {
+                        return Date.FromByteArray(bytes);
+                    }
+                    else
+                    {
+                        return Date.ToArray(bytes);
+                    }
                 default:
                     return null;
             }
@@ -197,10 +289,12 @@ namespace S7.Net
                 case VarType.Timer:
                 case VarType.Int:
                 case VarType.Counter:
+                case VarType.Date:
                     return varCount * 2;
                 case VarType.DWord:
                 case VarType.DInt:
                 case VarType.Real:
+                case VarType.Time:
                     return varCount * 4;
                 case VarType.LReal:
                 case VarType.DateTime:
@@ -253,7 +347,7 @@ namespace S7.Net
             int packageSize = 19 + (dataItems.Count * 12);
             var package = new System.IO.MemoryStream(packageSize);
 
-            BuildHeaderPackage(package, dataItems.Count);
+            WriteReadHeader(package, dataItems.Count);
 
             foreach (var dataItem in dataItems)
             {
@@ -261,6 +355,16 @@ namespace S7.Net
             }
 
             return package.ToArray();
+        }
+
+        private static byte[] BuildSzlReadRequestPackage(ushort szlId, ushort szlIndex)
+        {
+            var stream = new System.IO.MemoryStream();
+
+            WriteSzlReadRequest(stream, szlId, szlIndex);
+            stream.SetLength(stream.Position);
+
+            return stream.ToArray();
         }
     }
 }

@@ -45,6 +45,7 @@ namespace S7.Net.Types
                         break;
                     case "Int32":
                     case "UInt32":
+                    case "TimeSpan":
                         numBytes = Math.Ceiling(numBytes);
                         if ((numBytes / 2 - Math.Floor(numBytes / 2.0)) > 0)
                             numBytes++;
@@ -98,8 +99,8 @@ namespace S7.Net.Types
             int bytePos = 0;
             int bitPos = 0;
             double numBytes = 0.0;
-            object structValue = Activator.CreateInstance(structType);
-
+            object structValue = Activator.CreateInstance(structType) ??
+                throw new ArgumentException($"Failed to create an instance of the type {structType}.", nameof(structType));
 
             var infos = structValue.GetType()
 #if NETSTANDARD1_3
@@ -215,6 +216,21 @@ namespace S7.Net.Types
 
                         numBytes += sData.Length;
                         break;
+                    case "TimeSpan":
+                        numBytes = Math.Ceiling(numBytes);
+                        if ((numBytes / 2 - Math.Floor(numBytes / 2.0)) > 0)
+                            numBytes++;
+                        
+                        // get the value
+                        info.SetValue(structValue, TimeSpan.FromByteArray(new[] 
+                        {
+                            bytes[(int)numBytes + 0],
+                            bytes[(int)numBytes + 1],
+                            bytes[(int)numBytes + 2],
+                            bytes[(int)numBytes + 3]
+                        }));
+                        numBytes += 4;
+                        break;
                     default:
                         var buffer = new byte[GetStructSize(info.FieldType)];
                         if (buffer.Length == 0)
@@ -254,6 +270,14 @@ namespace S7.Net.Types
 
             foreach (var info in infos)
             {
+                static TValue GetValueOrThrow<TValue>(FieldInfo fi, object structValue) where TValue : struct
+                {
+                    var value = fi.GetValue(structValue) as TValue? ??
+                        throw new ArgumentException($"Failed to convert value of field {fi.Name} of {structValue} to type {typeof(TValue)}");
+
+                    return value;
+                }
+
                 bytes2 = null;
                 switch (info.FieldType.Name)
                 {
@@ -261,7 +285,7 @@ namespace S7.Net.Types
                         // get the value
                         bytePos = (int)Math.Floor(numBytes);
                         bitPos = (int)((numBytes - (double)bytePos) / 0.125);
-                        if ((bool)info.GetValue(structValue))
+                        if (GetValueOrThrow<bool>(info, structValue))
                             bytes[bytePos] |= (byte)Math.Pow(2, bitPos);            // is true
                         else
                             bytes[bytePos] &= (byte)(~(byte)Math.Pow(2, bitPos));   // is false
@@ -270,26 +294,26 @@ namespace S7.Net.Types
                     case "Byte":
                         numBytes = (int)Math.Ceiling(numBytes);
                         bytePos = (int)numBytes;
-                        bytes[bytePos] = (byte)info.GetValue(structValue);
+                        bytes[bytePos] = GetValueOrThrow<byte>(info, structValue);
                         numBytes++;
                         break;
                     case "Int16":
-                        bytes2 = Int.ToByteArray((Int16)info.GetValue(structValue));
+                        bytes2 = Int.ToByteArray(GetValueOrThrow<short>(info, structValue));
                         break;
                     case "UInt16":
-                        bytes2 = Word.ToByteArray((UInt16)info.GetValue(structValue));
+                        bytes2 = Word.ToByteArray(GetValueOrThrow<ushort>(info, structValue));
                         break;
                     case "Int32":
-                        bytes2 = DInt.ToByteArray((Int32)info.GetValue(structValue));
+                        bytes2 = DInt.ToByteArray(GetValueOrThrow<int>(info, structValue));
                         break;
                     case "UInt32":
-                        bytes2 = DWord.ToByteArray((UInt32)info.GetValue(structValue));
+                        bytes2 = DWord.ToByteArray(GetValueOrThrow<uint>(info, structValue));
                         break;
                     case "Single":
-                        bytes2 = Real.ToByteArray((float)info.GetValue(structValue));
+                        bytes2 = Real.ToByteArray(GetValueOrThrow<float>(info, structValue));
                         break;
                     case "Double":
-                        bytes2 = LReal.ToByteArray((double)info.GetValue(structValue));
+                        bytes2 = LReal.ToByteArray(GetValueOrThrow<double>(info, structValue));
                         break;
                     case "String":
                         S7StringAttribute? attribute = info.GetCustomAttributes<S7StringAttribute>().SingleOrDefault();
@@ -298,10 +322,13 @@ namespace S7.Net.Types
 
                         bytes2 = attribute.Type switch
                         {
-                            S7StringType.S7String => S7String.ToByteArray((string)info.GetValue(structValue), attribute.ReservedLength),
-                            S7StringType.S7WString => S7WString.ToByteArray((string)info.GetValue(structValue), attribute.ReservedLength),
+                            S7StringType.S7String => S7String.ToByteArray((string?)info.GetValue(structValue), attribute.ReservedLength),
+                            S7StringType.S7WString => S7WString.ToByteArray((string?)info.GetValue(structValue), attribute.ReservedLength),
                             _ => throw new ArgumentException("Please use a valid string type for the S7StringAttribute")
                         };
+                        break;
+                    case "TimeSpan":
+                        bytes2 = TimeSpan.ToByteArray((System.TimeSpan)info.GetValue(structValue));
                         break;
                 }
                 if (bytes2 != null)

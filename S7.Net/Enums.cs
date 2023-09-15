@@ -202,10 +202,20 @@
         /// DateTIme variable type
         /// </summary>
         DateTime,
+        
+        /// <summary>
+        /// IEC date (legacy) variable type
+        /// </summary>
+        Date,
 
         /// <summary>
         /// DateTimeLong variable type
         /// </summary>
-        DateTimeLong
+        DateTimeLong,
+        
+        /// <summary>
+        /// S7 TIME variable type - serialized as S7 DInt and deserialized as C# TimeSpan 
+        /// </summary>
+        Time
     }
 }
